@@ -1,8 +1,18 @@
+from dataclasses import dataclass
 import PyPDF2
 
 
+# Key가 고정된 dict을 반환할 때, dataclass를 대신 써보세요.
+@dataclass
+class Document:
+    title: str
+    author: str
+    subject: str
+    page_content_list: list[str]
+
+
 # 들여쓰기 (Indentation)
-def get_pdf_info(pdf_path: str) -> dict:
+def get_pdf_info(pdf_path: str) -> Document:
     with open(pdf_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
 
@@ -18,18 +28,24 @@ def get_pdf_info(pdf_path: str) -> dict:
             # print(page_content)
             # print()
 
-        return {
-            "title": title,
-            "author": author,
-            "subject": subject,
-            "page_content_list": page_content_list,
-        }
+        # return {
+        #     "title": title,
+        #     "author": author,
+        #     "subject": subject,
+        #     "page_content_list": page_content_list,
+        # }
+        return Document(
+            title=title,  # 속성명=값
+            author=author,
+            subject=subject,
+            page_content_list=page_content_list,
+        )
 
 
 def main():
     pdf_path = "./PDFs/1GJCC9-36110-BC-301-515_Foundation Load Calculation for Surface Condenser_Rev.A.pdf"
-    info = get_pdf_info(pdf_path)
-    print(info["title"])
+    document = get_pdf_info(pdf_path)
+    print(document.title)
 
 
 main()
