@@ -388,7 +388,7 @@ def make_base64_url(
     return url
 
 
-def hwp_to_str(
+def hwp_to_html(
     hwp_path: str | None = None, hwp_file: FileUploadProtocol | BinaryIO | None = None
 ) -> str:
     """
@@ -457,19 +457,85 @@ def hwp_to_str(
         # BeautifulSoup으로 HTML 파싱 및 정제
         soup = BeautifulSoup(html_content, "html.parser")
 
-        # 불필요한 태그 제거 (img 포함)
-        for tag in soup.find_all(["script", "style", "link", "img"]):
+        # 불필요한 태그 제거
+        for tag in soup.find_all(["script", "style", "link", "img", "meta"]):
             tag.decompose()
 
-        # 테이블에 최소 CSS 적용
-        for table in soup.find_all("table"):
-            table["style"] = "border-collapse: collapse; border: 1px solid black;"
+        # 모든 인라인 style 속성 제거
+        for tag in soup.find_all(True):  # 모든 태그 선택
+            if tag.has_attr("style"):
+                del tag["style"]
+            # 다른 불필요한 속성들도 제거 (class는 유지)
+            for attr in ["width", "height", "align", "valign", "bgcolor", "border"]:
+                if tag.has_attr(attr):
+                    del tag[attr]
 
-        for element in soup.find_all(["td", "th"]):
-            element["style"] = "border: 1px solid black; padding: 4px;"
+        # head 태그 찾기 또는 생성
+        head = soup.find("head")
+        if not head:
+            head = soup.new_tag("head")
+            if soup.html:
+                soup.html.insert(0, head)
+            else:
+                # html 태그도 없으면 생성
+                html = soup.new_tag("html")
+                body = soup.find("body")
+                if body:
+                    body.extract()
+                    html.append(head)
+                    html.append(body)
+                else:
+                    # body도 없으면 전체 콘텐츠를 body로 감싸기
+                    body = soup.new_tag("body")
+                    for child in list(soup.children):
+                        body.append(child.extract())
+                    html.append(head)
+                    html.append(body)
+                soup.append(html)
 
-        # 정제된 HTML 문자열 반환
-        return str(soup)
+        # 최소한의 CSS 스타일 추가
+        style_tag = soup.new_tag("style")
+        style_tag.string = """
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                margin: 20px;
+            }
+            table {
+                border-collapse: collapse;
+                border: 1px solid #ddd;
+                margin: 10px 0;
+                width: 100%;
+            }
+            td, th {
+                border: 1px solid #ddd;
+                padding: 8px;
+                text-align: left;
+            }
+            th {
+                background-color: #f5f5f5;
+                font-weight: bold;
+            }
+            tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            p {
+                margin: 10px 0;
+            }
+        """
+        head.append(style_tag)
+
+        # HTML 문자열로 변환 (XML 선언 제거)
+        html_str = str(soup)
+
+        # XML 선언 제거 (있을 경우)
+        if html_str.startswith("<?xml"):
+            xml_end = html_str.find("?>")
+            if xml_end != -1:
+                html_str = html_str[xml_end + 2 :].strip()
+
+        return html_str
 
     except Exception as e:
         raise Exception(f"HWP 변환 중 오류 발생: {e}")
