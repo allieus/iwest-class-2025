@@ -1,5 +1,40 @@
 import os
 import requests
+from openai import OpenAI
+from openai.types.shared.chat_model import ChatModel
+
+
+def make_response(
+    user_content: str,
+    system_content: str | None = None,
+    model: str | ChatModel = "gpt-4o-mini",
+    temperature: float = 0.25,
+    api_key: str | None = None,
+) -> str:
+    """OpenAI의 Chat Completion API를 사용하여 AI의 응답을 생성합니다.
+
+    Args:
+        user_content (str): 사용자 메시지.
+        system_content (str | None, optional): 시스템 메시지. 기본값은 None.
+        model (str | ChatModel, optional): 사용할 모델. 기본값은 "gpt-4o-mini".
+        temperature (float, optional): 생성 결과의 창의성. 기본값은 0.25.
+        api_key (str | None, optional): OpenAI API 키. 기본값은 None.
+
+    Returns:
+        str: AI가 생성한 응답 메시지.
+    """
+    messages = []
+    if system_content:  # 빈 문자열도 아니고, None도 아닐 때
+        messages.append({"role": "system", "content": system_content})
+    messages.append({"role": "user", "content": user_content})
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+    )
+    return response.choices[0].message.content
+
 
 def download_file(
     file_url: str,
@@ -20,6 +55,7 @@ def download_file(
     with open(filepath, "wb") as f:
         f.write(file_content)
         print("saved", filepath)
+
 
 def multiply(a: int, b: int) -> int:
     """두 개의 숫자를 곱한 결과를 반환합니다.
