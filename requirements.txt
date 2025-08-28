@@ -12,3 +12,7 @@ python-dotenv
 
 # jupyter notbook
 jupyter
+
+# pdf library
+pypdf2
+pdfplumber
