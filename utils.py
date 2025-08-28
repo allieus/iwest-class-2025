@@ -3,7 +3,8 @@ import mimetypes
 import requests
 from base64 import b64encode
 from dataclasses import dataclass
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Protocol, TypeVar, Generic, overload
+from pydantic import BaseModel
 from openai import OpenAI
 from openai.types.shared.chat_model import ChatModel
 
@@ -68,6 +69,31 @@ class ResponseWithUsage(str):
         return self._usage
 
 
+# TypeVar for Generic support
+T = TypeVar("T", bound=BaseModel)
+
+
+class StructuredResponseWithUsage(Generic[T]):
+    """Pydantic 모델 인스턴스와 usage 정보를 포함하는 응답 클래스.
+
+    일반 Pydantic 모델처럼 사용하면서 추가로 usage 정보에 접근할 수 있습니다.
+
+    Attributes:
+        parsed: 파싱된 Pydantic 모델 인스턴스
+        usage: 토큰 사용량 정보 (선택사항)
+    """
+
+    def __init__(self, parsed: T, usage: Usage | None = None):
+        """StructuredResponseWithUsage 인스턴스 생성.
+
+        Args:
+            parsed: 파싱된 Pydantic 모델 인스턴스
+            usage: 토큰 사용량 정보 (선택사항)
+        """
+        self.parsed = parsed
+        self.usage = usage
+
+
 def get_mime_type(file_path: str) -> str:
     """파일 경로에서 MIME 타입을 추론합니다.
 
@@ -85,6 +111,40 @@ def get_mime_type(file_path: str) -> str:
     return mime_type or "application/octet-stream"
 
 
+# Overload for when response_format is provided (returns StructuredResponseWithUsage)
+@overload
+def make_response(
+    user_content: str,
+    *,
+    response_format: type[T],
+    file_path: str | None = None,
+    file: FileUploadProtocol | BinaryIO | None = None,
+    image_path: str | None = None,
+    image_file: FileUploadProtocol | BinaryIO | None = None,
+    system_content: str | None = None,
+    model: str | ChatModel = "gpt-4o-mini",
+    temperature: float = 0.25,
+    api_key: str | None = None,
+) -> StructuredResponseWithUsage[T]: ...
+
+
+# Overload for when response_format is not provided (returns ResponseWithUsage)
+@overload
+def make_response(
+    user_content: str,
+    file_path: str | None = None,
+    file: FileUploadProtocol | BinaryIO | None = None,
+    image_path: str | None = None,
+    image_file: FileUploadProtocol | BinaryIO | None = None,
+    system_content: str | None = None,
+    model: str | ChatModel = "gpt-4o-mini",
+    temperature: float = 0.25,
+    api_key: str | None = None,
+    *,
+    response_format: None = None,
+) -> ResponseWithUsage: ...
+
+
 def make_response(
     user_content: str,
     file_path: str | None = None,  # 새로운 범용 파일 경로 (이미지/PDF)
@@ -97,10 +157,12 @@ def make_response(
     model: str | ChatModel = "gpt-4o-mini",
     temperature: float = 0.25,
     api_key: str | None = None,
-) -> ResponseWithUsage:
+    response_format: type[BaseModel] | None = None,  # 새로운 파라미터
+) -> ResponseWithUsage | StructuredResponseWithUsage:
     """OpenAI의 Chat Completion API를 사용하여 AI의 응답을 생성합니다.
 
-    이미지 파일(.png, .jpg, .jpeg)과 PDF 파일을 지원합니다.
+    이미지 파일(.png, .jpg, .jpeg)과 PDF 파일을 지원하며,
+    Pydantic 모델을 사용한 구조화된 출력(Structured Output)도 지원합니다.
 
     Args:
         user_content (str): 사용자 메시지.
@@ -112,16 +174,29 @@ def make_response(
         model (str | ChatModel, optional): 사용할 모델. 기본값은 "gpt-4o-mini".
         temperature (float, optional): 생성 결과의 창의성. 기본값은 0.25.
         api_key (str | None, optional): OpenAI API 키. 기본값은 None.
+        response_format (type[BaseModel] | None, optional): Pydantic 모델 클래스. 기본값은 None.
 
     Returns:
-        ResponseWithUsage: AI가 생성한 응답 메시지. 문자열처럼 사용 가능하며,
-            .usage 속성을 통해 토큰 사용량 정보에 접근할 수 있습니다.
+        ResponseWithUsage | StructuredResponseWithUsage:
+            - response_format이 None인 경우: ResponseWithUsage (문자열처럼 사용 가능)
+            - response_format이 제공된 경우: StructuredResponseWithUsage (파싱된 Pydantic 모델 포함)
 
     Examples:
+        일반 텍스트 응답:
         >>> response = make_response("안녕하세요")
         >>> print(response)  # "안녕하세요! 무엇을 도와드릴까요?"
         >>> print(response.usage.input_tokens)  # 10
-        >>> print(response.usage.output_tokens)  # 15
+
+        구조화된 응답:
+        >>> class UserInfo(BaseModel):
+        ...     name: str
+        ...     age: int
+        >>> response = make_response(
+        ...     "철수는 25살입니다",
+        ...     response_format=UserInfo
+        ... )
+        >>> print(response.parsed.name)  # "철수"
+        >>> print(response.parsed.age)  # 25
     """
     # 1. 호환성 처리 (간단하게)
     file_path = file_path or image_path
@@ -166,27 +241,57 @@ def make_response(
 
     # 4. API 호출
     client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-    )
 
-    # 5. Usage 정보 추출 및 반환
-    usage = (
-        Usage(
-            input_tokens=response.usage.prompt_tokens,
-            output_tokens=response.usage.completion_tokens,
-            total_tokens=response.usage.total_tokens,
+    # Pydantic 모델이 제공된 경우 - Structured Output 사용
+    if response_format is not None:
+        # beta.chat.completions.parse를 사용하여 구조화된 출력 생성
+        response = client.beta.chat.completions.parse(
+            model=model,
+            messages=messages,
+            response_format=response_format,
+            temperature=temperature,
         )
-        if response.usage
-        else None
-    )
 
-    return ResponseWithUsage(
-        content=response.choices[0].message.content or "",
-        usage=usage,
-    )
+        # Usage 정보 추출
+        usage = (
+            Usage(
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+            )
+            if response.usage
+            else None
+        )
+
+        # 파싱된 객체와 usage 정보를 함께 반환
+        return StructuredResponseWithUsage(
+            parsed=response.choices[0].message.parsed,
+            usage=usage,
+        )
+
+    # 기존 방식 - 일반 텍스트 응답
+    else:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
+
+        # 5. Usage 정보 추출 및 반환
+        usage = (
+            Usage(
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+            )
+            if response.usage
+            else None
+        )
+
+        return ResponseWithUsage(
+            content=response.choices[0].message.content or "",
+            usage=usage,
+        )
 
 
 def download_file(
