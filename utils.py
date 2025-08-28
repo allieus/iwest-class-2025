@@ -8,6 +8,7 @@ from openai.types.shared.chat_model import ChatModel
 def make_response(
     user_content: str,
     image_path: str | None = None,
+    image_file=None,  # TODO: 타입 지정 필요
     system_content: str | None = None,
     model: str | ChatModel = "gpt-4o-mini",
     temperature: float = 0.25,
@@ -31,7 +32,13 @@ def make_response(
     messages.append({"role": "user", "content": user_content})
 
     if image_path:
-        image_url = make_base64_url(image_path)
+        image_url = make_base64_url(image_path=image_path)
+    elif image_file:
+        image_url = make_base64_url(image_file=image_file)
+    else:
+        image_url = None
+
+    if image_url:
         image_dict = {
             "type": "image_url",
             "image_url": {
@@ -84,12 +91,21 @@ def multiply(a: int, b: int) -> int:
     return a * b
 
 
-def make_base64_url(image_path: str) -> str:
-    # 다른 언어의 3항 연산자와 같은 역할
-    mime_type = "image/png" if image_path.endswith(".png") else "image/jpeg"
+def make_base64_url(
+    image_path: str | None = None,
+    image_file=None,  # TODO: 타입 지원
+) -> str:
+    if image_path:
+        # 다른 언어의 3항 연산자와 같은 역할
+        mime_type = "image/png" if image_path.endswith(".png") else "image/jpeg"
+        with open(image_path, "rb") as f:
+            image_data: bytes = f.read()
+    elif image_file:
+        mime_type = image_file.type
+        image_data = image_file.read()
+    else:
+        raise ValueError("image_path 혹은 image_file 인자를 지정해주세요.")
 
-    with open(image_path, "rb") as f:
-        image_data: bytes = f.read()
-        b64_str: str = b64encode(image_data).decode()
-        image_url = f"data:{mime_type};base64," + b64_str
-        return image_url
+    b64_str: str = b64encode(image_data).decode()
+    image_url = f"data:{mime_type};base64," + b64_str
+    return image_url
