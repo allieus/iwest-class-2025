@@ -1,12 +1,17 @@
 import os
 import mimetypes
 import requests
+import tempfile
 from base64 import b64encode
 from dataclasses import dataclass
 from typing import BinaryIO, Protocol, TypeVar, Generic, overload
 from pydantic import BaseModel
 from openai import OpenAI
 from openai.types.shared.chat_model import ChatModel
+from bs4 import BeautifulSoup
+from hwp5.xmlmodel import Hwp5File
+from hwp5.hwp5html import HTMLTransform
+from contextlib import closing
 
 
 class FileUploadProtocol(Protocol):
@@ -381,3 +386,105 @@ def make_base64_url(
     b64_str: str = b64encode(data).decode()
     url = f"data:{mime_type};base64," + b64_str
     return url
+
+
+def hwp_to_str(
+    hwp_path: str | None = None, hwp_file: FileUploadProtocol | BinaryIO | None = None
+) -> str:
+    """
+    HWP 파일을 HTML 문자열로 변환합니다.
+
+    Args:
+        hwp_path: HWP 파일의 경로
+        hwp_file: FileUploadProtocol 또는 BinaryIO 타입의 파일 객체
+
+    Returns:
+        정제된 HTML 문자열
+
+    Raises:
+        ValueError: 입력이 잘못된 경우
+        RuntimeError: HWP 변환 실패
+    """
+    # 입력 검증
+    if not hwp_path and not hwp_file:
+        raise ValueError("hwp_path 또는 hwp_file 중 하나는 필수입니다.")
+    if hwp_path and hwp_file:
+        raise ValueError("hwp_path와 hwp_file을 동시에 제공할 수 없습니다.")
+
+    temp_hwp_path = None
+    temp_output_dir = None
+
+    try:
+        # hwp_file이 제공된 경우 임시 파일로 저장
+        if hwp_file:
+            # 파일 내용 읽기
+            if hasattr(hwp_file, "read"):
+                content = hwp_file.read()
+                # bytes가 아닌 경우 처리
+                if isinstance(content, str):
+                    content = content.encode("utf-8")
+            else:
+                raise ValueError("hwp_file은 read() 메서드를 가져야 합니다.")
+
+            # 임시 HWP 파일 생성
+            with tempfile.NamedTemporaryFile(suffix=".hwp", delete=False) as temp_hwp:
+                temp_hwp.write(content)
+                temp_hwp_path = temp_hwp.name
+                working_hwp_path = temp_hwp_path
+        else:
+            working_hwp_path = hwp_path
+
+        # xmlmodel.Hwp5File을 사용하여 HWP 파일 열기 (hwp5html과 동일한 방식)
+        with closing(Hwp5File(working_hwp_path)) as hwp5file:
+            # HTMLTransform 인스턴스 생성
+            transform = HTMLTransform()
+
+            # 임시 출력 디렉토리 생성
+            temp_output_dir = tempfile.mkdtemp()
+
+            # HWP를 HTML로 변환 (디렉토리에 출력)
+            transform.transform_hwp5_to_dir(hwp5file, temp_output_dir)
+
+            # 생성된 index.xhtml 파일 읽기
+            html_path = os.path.join(temp_output_dir, "index.xhtml")
+
+            if not os.path.exists(html_path):
+                raise RuntimeError("HTML 변환 결과를 찾을 수 없습니다.")
+
+            with open(html_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+
+        # BeautifulSoup으로 HTML 파싱 및 정제
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        # 불필요한 태그 제거 (img 포함)
+        for tag in soup.find_all(["script", "style", "link", "img"]):
+            tag.decompose()
+
+        # 테이블에 최소 CSS 적용
+        for table in soup.find_all("table"):
+            table["style"] = "border-collapse: collapse; border: 1px solid black;"
+
+        for element in soup.find_all(["td", "th"]):
+            element["style"] = "border: 1px solid black; padding: 4px;"
+
+        # 정제된 HTML 문자열 반환
+        return str(soup)
+
+    except Exception as e:
+        raise Exception(f"HWP 변환 중 오류 발생: {e}")
+    finally:
+        # 임시 파일 및 디렉토리 정리
+        if temp_hwp_path and os.path.exists(temp_hwp_path):
+            try:
+                os.unlink(temp_hwp_path)
+            except:
+                pass
+        if temp_output_dir and os.path.exists(temp_output_dir):
+            try:
+                # 디렉토리 내 모든 파일 삭제
+                import shutil
+
+                shutil.rmtree(temp_output_dir)
+            except:
+                pass
