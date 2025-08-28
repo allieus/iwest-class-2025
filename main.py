@@ -14,9 +14,12 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", default=None) or None
 # print(email_body)
 
 # read+text mode
-file = open("./회의록/20250825.txt", "rt", encoding="utf-8")
-회의록 = file.read()  # 파일의 전체 내용을 읽어서, 문자열로 반환
-file.close()
+# file = open("./회의록/20250825.txt", "rt", encoding="utf-8")
+# 회의록 = file.read()  # 파일의 전체 내용을 읽어서, 문자열로 반환
+# file.close()
+
+with open("./회의록/20250825.txt", "rt", encoding="utf-8") as file:
+    회의록 = file.read()  # 파일의 전체 내용을 읽어서, 문자열로 반환
 
 요약내용 = summarize_meeting(회의록=회의록, api_key=OPENAI_API_KEY)
 print("## 요약 내용 ##")
