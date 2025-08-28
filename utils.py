@@ -1,11 +1,13 @@
 import os
 import requests
+from base64 import b64encode
 from openai import OpenAI
 from openai.types.shared.chat_model import ChatModel
 
 
 def make_response(
     user_content: str,
+    image_path: str | None = None,
     system_content: str | None = None,
     model: str | ChatModel = "gpt-4o-mini",
     temperature: float = 0.25,
@@ -27,6 +29,18 @@ def make_response(
     if system_content:  # 빈 문자열도 아니고, None도 아닐 때
         messages.append({"role": "system", "content": system_content})
     messages.append({"role": "user", "content": user_content})
+
+    if image_path:
+        image_url = make_base64_url(image_path)
+        image_dict = {
+            "type": "image_url",
+            "image_url": {
+                "url": image_url,
+                "detail": "high",
+            },
+        }
+        messages.append({"role": "user", "content": [image_dict]})
+
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
         model=model,
@@ -68,3 +82,14 @@ def multiply(a: int, b: int) -> int:
         int: a와 b를 곱한 값.
     """
     return a * b
+
+
+def make_base64_url(image_path: str) -> str:
+    # 다른 언어의 3항 연산자와 같은 역할
+    mime_type = "image/png" if image_path.endswith(".png") else "image/jpeg"
+
+    with open(image_path, "rb") as f:
+        image_data: bytes = f.read()
+        b64_str: str = b64encode(image_data).decode()
+        image_url = f"data:{mime_type};base64," + b64_str
+        return image_url
