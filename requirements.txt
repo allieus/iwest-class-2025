@@ -16,6 +16,7 @@ jupyter
 # pdf library
 pypdf2
 pdfplumber
+pymupdf
 camelot-py[base]
 pandas
 tabulate
